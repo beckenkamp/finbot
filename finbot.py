@@ -8,6 +8,10 @@ app = Flask(__name__)
 
 token = os.environ.get('FB_ACCESS_TOKEN')
 
+@app.route('/')
+def index():
+  return 'Finbot'
+
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
   if request.method == 'POST':
