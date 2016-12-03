@@ -31,8 +31,8 @@ def get_response(response_type):
 chat_keywords = {}
 
 chat_keywords['greetings'] = [
-    'Oi',
-    'Olá',
+    'oi',
+    'olá',
 ]
 
 chat_keywords['intro'] = [
