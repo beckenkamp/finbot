@@ -9,6 +9,8 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.dialects.mysql import BIGINT
 from flask import Flask, request
 
+from messages import get_response, chat_keywords, define_response_by_keyword
+
 # Configurations
 token = os.environ.get('FB_ACCESS_TOKEN')
 db_file = os.path.realpath('finbot.db')
@@ -85,6 +87,10 @@ class Conversation(db.Model):
     """
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True)
+    created_at = db.Column(db.DateTime)
+
+    def __init__(self):
+        self.created_at = datetime.now()
 
 
 def get_or_create_user(sender):
@@ -126,7 +132,18 @@ def create_response_message(user, income_message):
     """
     Build the response to any message
     """
-    return "Olá, {}!".format(user.first_name)
+    response_type = define_response_by_keyword(income_message)
+    if response_type:
+        return get_response(response_type).format(name=user.first_name)
+    return get_response(None)
+
+
+def send_message(sender, message):
+    """
+    Sends a message to the user
+    """
+    payload = {'recipient': {'id': sender}, 'message': {'text': message}}
+    r = requests.post('https://graph.facebook.com/v2.6/me/messages/?access_token=' + token, json=payload)
 
 
 @app.route('/')
@@ -145,9 +162,7 @@ def webhook():
             user = get_or_create_user(sender)
 
             message = create_response_message(user, text)
-
-            payload = {'recipient': {'id': sender}, 'message': {'text': message}}
-            r = requests.post('https://graph.facebook.com/v2.6/me/messages/?access_token=' + token, json=payload)
+            send_message(sender, message)
         except Exception as e:
             print(traceback.format_exc())  # something went wrong
     elif request.method == 'GET': # For the initial verification
