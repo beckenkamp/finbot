@@ -24,7 +24,7 @@ class User(db.Model):
     Model that keeps user information
     """
     id = db.Column(db.Integer, primary_key=True)
-    facebook_id = db.Column(BIGINT(unsigned=True))
+    facebook_id = db.Column(BIGINT(unsigned=True), index=True)
     first_name = db.Column(db.String(120))
     last_name = db.Column(db.String(120))
     profile_pic = db.Column(db.Text)
@@ -39,6 +39,52 @@ class User(db.Model):
 
     def __repr__(self):
         return '{} {}'.format(self.first_name, self.last_name)
+
+
+class Category(db.Model):
+    """
+    Model that store categories
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey('category.id'), index=True)
+    name = db.Column(db.String(120))
+    created_at = db.Column(db.DateTime)
+    updated_at = db.Column(db.DateTime, default=datetime.now())
+
+    def __init__(self):
+        self.created_at = datetime.now()
+
+    def __repr__(self):
+        return '{}'.format(self.name)
+
+
+class Budget(db.Model):
+    """
+    Model that store the items and values
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True)
+    category_id = db.Column(db.Integer, db.ForeignKey('category.id'), index=True)
+    description = db.Column(db.String(120))
+    value = db.Column(db.Float)
+    date_time = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime)
+    updated_at = db.Column(db.DateTime, default=datetime.now())
+
+    def __init__(self):
+        self.created_at = datetime.now()
+
+    def __repr__(self):
+        return '{}'.format(self.description)
+
+
+class Conversation(db.Model):
+    """
+    Model that stores the conversation context
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True)
 
 
 def get_or_create_user(sender):
@@ -76,6 +122,13 @@ def send_loading_message(sender):
     requests.post('https://graph.facebook.com/v2.6/me/messages/?access_token=' + token, json=payload)
 
 
+def create_response_message(user, income_message):
+    """
+    Build the response to any message
+    """
+    return "Olá, {}!".format(user.first_name)
+
+
 @app.route('/')
 def index():
     return 'Finbot'
@@ -91,8 +144,7 @@ def webhook():
             send_loading_message(sender)  # Typing on signal
             user = get_or_create_user(sender)
 
-            message = "Hello, {}. A data de atualização das suas informações é {}".format(user.first_name,
-                user.updated_at.strftime('%d/%m/%Y %H:%M'))
+            message = create_response_message(user, text)
 
             payload = {'recipient': {'id': sender}, 'message': {'text': message}}
             r = requests.post('https://graph.facebook.com/v2.6/me/messages/?access_token=' + token, json=payload)
