@@ -9,7 +9,8 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.dialects.mysql import BIGINT
 from flask import Flask, request
 
-from messages import get_response, chat_keywords, define_response_by_keyword
+from messages import send_loading_message, send_message, send_quick_replies, get_response, \
+                     send_text_message
 
 # Configurations
 token = os.environ.get('FB_ACCESS_TOKEN')
@@ -87,7 +88,9 @@ class Conversation(db.Model):
     """
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True)
+    status = db.Column(db.String(120))
     created_at = db.Column(db.DateTime)
+    updated_at = db.Column(db.DateTime, default=datetime.now())
 
     def __init__(self):
         self.created_at = datetime.now()
@@ -107,6 +110,7 @@ def get_or_create_user(sender):
         if response:
             user = User()
 
+            user.facebook_id = sender
             user.first_name = response["first_name"]
             user.last_name = response["last_name"]
             user.profile_pic = response["profile_pic"]
@@ -120,30 +124,70 @@ def get_or_create_user(sender):
     return user
 
 
-def send_loading_message(sender):
+def get_or_create_conversation(user_id):
     """
-    Sends a signal to messenger informing is loading the data
+    Return the status of the conversation with an user
     """
-    payload = {'recipient': {'id': sender}, 'sender_action': 'typing_on'}
-    requests.post('https://graph.facebook.com/v2.6/me/messages/?access_token=' + token, json=payload)
+    conversation = Conversation.query.filter_by(user_id=user_id).first()
+
+    if not conversation:
+        conversation = Conversation()
+        conversation.status = 'init'
+        conversation.user_id = user_id
+        db.session.add(conversation)
+        db.session.commit()
+
+    return conversation
 
 
-def create_response_message(user, income_message):
+def save_categories(user_id, categories):
     """
-    Build the response to any message
+    Save the new cagtegoies
     """
-    response_type = define_response_by_keyword(income_message)
-    if response_type:
-        return get_response(response_type).format(name=user.first_name)
-    return get_response(None)
+    category_list = categories.split(',')
+    for category in category_list:
+        category = category.strip()  # trim
+        c = Category.query.filter_by(user_id=user_id, name=category).first()
+        if not c:
+            c = Category()
+            c.user_id = user_id
+            c.name = category
+            db.session.add(c)
+
+    db.session.commit()
 
 
-def send_message(sender, message):
+def get_category_list(user_id):
     """
-    Sends a message to the user
+    Returns the text with a category list
     """
-    payload = {'recipient': {'id': sender}, 'message': {'text': message}}
-    r = requests.post('https://graph.facebook.com/v2.6/me/messages/?access_token=' + token, json=payload)
+    response_text = 'Categorias:\n'
+    categories = Category.query.filter_by(user_id=user_id).all()
+    for c in categories:
+        response_text += '- {}\n'.format(c.name)
+    return response_text
+
+
+def verify_quick_message(user_id, sender, payload, conversation_status):
+    """
+    Verify the user request and the conversation status to manage the response
+    """
+    if conversation_status == 'init':
+        pass
+    else:
+        if payload == 'deposit':
+            pass
+        if payload == 'withdrawal':
+            pass
+        if payload == 'add_category':
+            send_text_message(sender, get_response('begin_add_category'))
+            conversation = Conversation.query.filter_by(user_id=user_id).first()
+            conversation.status = 'begin_add_category'
+            db.session.commit()
+        if payload == 'list_categories':
+            response_text = get_category_list(user_id)
+            send_text_message(sender, response_text)
+            send_quick_replies(sender, get_response('waiting'))
 
 
 @app.route('/')
@@ -155,14 +199,46 @@ def webhook():
     if request.method == 'POST':
         try:
             data = json.loads(request.data.decode())
-            text = data['entry'][0]['messaging'][0]['message']['text']  # Incoming Message Text
             sender = data['entry'][0]['messaging'][0]['sender']['id']  # Sender ID
+            text = data['entry'][0]['messaging'][0]['message']['text']  # Incoming Message Text
+            message_data = data['entry'][0]['messaging'][0]['message']
 
-            send_loading_message(sender)  # Typing on signal
             user = get_or_create_user(sender)
+            send_loading_message(sender)  # Typing on signal
 
-            message = create_response_message(user, text)
-            send_message(sender, message)
+            conversation = get_or_create_conversation(user.id)  # The conversation status
+            print(conversation.status)
+
+            if conversation.status == 'init':
+                send_text_message(sender, get_response('intro'))
+                send_text_message(sender, 'Ainda não temos categorias cadastradas. Vamos começar com elas?')
+                send_text_message(sender, get_response('begin_add_category'))
+                
+                conversation.status = 'begin_add_category'
+                db.session.commit()
+                return 'Done'
+
+            elif conversation.status == 'waiting':
+                if 'quick_reply' in message_data:
+                    payload = message_data['quick_reply']['payload']
+                    verify_quick_message(user.id, sender, payload, conversation.status)
+                else:
+                    send_quick_replies(sender, get_response('waiting'))
+
+            elif conversation.status == 'begin_add_category':
+                save_categories(user.id, text)
+                
+                conversation.status = 'waiting'
+                db.session.commit()
+
+                # Sends the category list
+                send_text_message(sender, get_category_list(user.id))
+
+                send_quick_replies(sender, get_response('waiting'))
+                return 'Done'
+
+            # message = create_response_message(user, text)
+            # send_message(sender, message)
         except Exception as e:
             print(traceback.format_exc())  # something went wrong
     elif request.method == 'GET': # For the initial verification

@@ -1,5 +1,9 @@
+import os
 import random
+import requests
 
+# Configurations
+token = os.environ.get('FB_ACCESS_TOKEN')
 
 chat_responses = {}
 
@@ -9,14 +13,28 @@ chat_responses['greetings'] = [
 ]
 
 chat_responses['intro'] = [
-    'Eu sou o Fin e estou aqui para ajudá-lo a organizar seu orçamento doméstico!',
-    'Meu nome é Fin e meu objetivo é lhe ajudar a organizar o seu orçamento.',
+    'Olá! Eu sou o Fin e estou aqui para ajudá-lo a organizar seu orçamento doméstico! Vamos começar?',
+    'Oi! Meu nome é Fin e meu objetivo é lhe ajudar a organizar o seu orçamento. Vamos começar?',
 ]
 
 chat_responses['no_answer'] = [
     'Estou sem resposta para você...',
     'Desculpe, não entendi.',
     'Ooops, não captei vossa mensagem...',
+]
+
+chat_responses['begin_add_data'] = [
+    'Vamos adicionar uma {} para a categoria {}. Me diga uma descrição, um valor e uma data, separados por vírgula.',
+]
+
+chat_responses['begin_add_category'] = [
+    'Vamos adicionar algumas novas categorias? Envie as categorias que quer cadastrar, separadas por vírgula.',
+]
+
+chat_responses['waiting'] = [
+    'O que fazer agora?',
+    'O que vamos fazer?',
+    'Escolha uma opção...',
 ]
 
 def get_response(response_type):
@@ -50,3 +68,73 @@ def define_response_by_keyword(message):
         for value in chat_keywords[key]:
             if value in message.lower():
                 return key
+
+
+# CREATE FACEBOOK MESSENGER STYLE RESPONSES
+def get_quick_replies(options_type='default'):
+    """
+    Creates the quick replies payload
+    """
+    if options_type == 'default':
+        quick_replies = [{
+                            'content_type': 'text',
+                            'title': 'Adicionar saída',
+                            'payload': 'withdrawal'
+                        },
+                        {
+                            'content_type': 'text',
+                            'title': 'Adicionar entrada',
+                            'payload': 'deposit'
+                        },
+                        {
+                            'content_type': 'text',
+                            'title': 'Ver categorias',
+                            'payload': 'list_categories'
+                        },
+                        {
+                            'content_type': 'text',
+                            'title': 'Adicionar categoria',
+                            'payload': 'add_category'
+                        }]
+
+    return quick_replies
+
+
+def send_message(payload):
+    """
+    Sends a message to the user
+    """
+    requests.post('https://graph.facebook.com/v2.6/me/messages/?access_token=' + token, json=payload)
+
+
+def send_loading_message(sender):
+    """
+    Sends a signal to messenger informing is loading the data
+    """
+    payload = {'recipient': {'id': sender}, 'sender_action': 'typing_on'}
+    send_message(payload)
+
+
+def create_response_message(user, income_message):
+    """
+    Build the response to any message
+    """
+    response_type = define_response_by_keyword(income_message)
+    if response_type:
+        return get_response(response_type).format(name=user.first_name)
+    return get_response(None)
+
+
+def send_text_message(sender, message):
+    payload = {'recipient': {'id': sender}, 'message': {'text': message}}
+    send_message(payload)
+
+
+def send_quick_replies(sender, message, options_type="default"):
+    """
+    Send a quick reply style of payload
+    """
+    options = get_quick_replies()
+    payload = {'recipient': {'id': sender}, 'message': {'text': message, 'quick_replies': options}}
+    send_message(payload)
+
