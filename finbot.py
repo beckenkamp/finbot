@@ -3,6 +3,7 @@ import requests
 import json
 import traceback
 import random
+import re
 
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
@@ -10,7 +11,7 @@ from sqlalchemy.dialects.mysql import BIGINT
 from flask import Flask, request
 
 from messages import send_loading_message, send_message, send_quick_replies, get_response, \
-                     send_text_message
+                     send_text_message, send_buttons
 
 # Configurations
 token = os.environ.get('FB_ACCESS_TOKEN')
@@ -72,11 +73,14 @@ class Budget(db.Model):
     description = db.Column(db.String(120))
     value = db.Column(db.Float)
     date_time = db.Column(db.DateTime)
+    status = db.Column(db.String(120))
+    entry_type = db.Column(db.String(120))
     created_at = db.Column(db.DateTime)
     updated_at = db.Column(db.DateTime, default=datetime.now())
 
     def __init__(self):
         self.created_at = datetime.now()
+        self.status = 'draft'
 
     def __repr__(self):
         return '{}'.format(self.description)
@@ -168,26 +172,95 @@ def get_category_list(user_id):
     return response_text
 
 
+def change_conversation_status(user_id, new_status):
+    """
+    Change the status of a conversation
+    """
+    conversation = Conversation.query.filter_by(user_id=user_id).first()
+    conversation.status = new_status
+    db.session.commit()
+
+
 def verify_quick_message(user_id, sender, payload, conversation_status):
     """
     Verify the user request and the conversation status to manage the response
     """
-    if conversation_status == 'init':
-        pass
+    if conversation_status == 'begin_add_withdrawal':
+        if payload:
+            category = Category.query.filter_by(user_id=user_id, name=payload).first()
+            send_text_message(sender, get_response('begin_add_data').format('saída', category))
+
+            new_entry = Budget()
+            new_entry.user_id = user_id
+            new_entry.category_id = category.id
+            new_entry.entry_type = 'withdrawal'
+            db.session.add(new_entry)
+            db.session.commit()
+
+            change_conversation_status(user_id, 'draft_add_withdrawal')
+        else:
+            # Tries again
+            verify_quick_message(user_id, sender, 'withdrawal', None)
     else:
         if payload == 'deposit':
             pass
         if payload == 'withdrawal':
-            pass
+            send_quick_replies(sender, 
+                               "Escolha uma categoria...", 
+                               'begin_add_withdrawal', 
+                               categories=[c.name for c in Category.query.filter_by(user_id=user_id)])
+            change_conversation_status(user_id, 'begin_add_withdrawal')
         if payload == 'add_category':
             send_text_message(sender, get_response('begin_add_category'))
-            conversation = Conversation.query.filter_by(user_id=user_id).first()
-            conversation.status = 'begin_add_category'
-            db.session.commit()
+            change_conversation_status(user_id, 'begin_add_category')
         if payload == 'list_categories':
             response_text = get_category_list(user_id)
             send_text_message(sender, response_text)
             send_quick_replies(sender, get_response('waiting'))
+
+
+def verify_new_entry(user_id, sender, text, conversation_status):
+    """
+    Verify and handles the new entry as a draft
+    """
+
+    parts_raw = text.split(',')
+    parts = [part.strip() for part in parts_raw]
+
+    description = parts[0]
+    value = handle_value(parts[1])
+    if len(parts) > 2:
+        entry_date = handle_date(parts[3])
+    else:
+        entry_date = datetime.now()
+
+    if conversation_status != 'confirm_add_withdrawal':
+        new_entry = Budget.query.filter_by(user_id=user_id, status='draft', entry_type='withdrawal').first()
+    else:
+        new_entry = Budget.query.filter_by(user_id=user_id, status='revision', entry_type='withdrawal').first()
+
+    if new_entry:
+        new_entry.description = description
+        new_entry.value = value
+        new_entry.date_time = entry_date
+        new_entry.status = 'revision'
+        db.session.commit()
+
+    if conversation_status != 'confirm_add_withdrawal':
+        change_conversation_status(user_id, 'confirm_add_withdrawal')
+
+
+def handle_date(raw):
+    # TODO: Handle datetime
+    return datetime.now()
+
+
+def handle_value(raw):
+    """
+    Extracts a float from a given string
+    """
+    float_number = re.findall(r"[-+]?\d*\.\d+|\d+", raw)
+    return float(float_number[0])
 
 
 @app.route('/')
@@ -200,8 +273,13 @@ def webhook():
         try:
             data = json.loads(request.data.decode())
             sender = data['entry'][0]['messaging'][0]['sender']['id']  # Sender ID
-            text = data['entry'][0]['messaging'][0]['message']['text']  # Incoming Message Text
-            message_data = data['entry'][0]['messaging'][0]['message']
+
+            if 'message' in data['entry'][0]['messaging'][0]:
+                text = data['entry'][0]['messaging'][0]['message']['text']  # Incoming Message Text
+                message_data = data['entry'][0]['messaging'][0]['message']
+
+            if 'postback' in data['entry'][0]['messaging'][0]:
+                message_data = data['entry'][0]['messaging'][0]['postback']
 
             user = get_or_create_user(sender)
             send_loading_message(sender)  # Typing on signal
@@ -216,7 +294,6 @@ def webhook():
                 
                 conversation.status = 'begin_add_category'
                 db.session.commit()
-                return 'Done'
 
             elif conversation.status == 'waiting':
                 if 'quick_reply' in message_data:
@@ -235,7 +312,32 @@ def webhook():
                 send_text_message(sender, get_category_list(user.id))
 
                 send_quick_replies(sender, get_response('waiting'))
-                return 'Done'
+
+            elif conversation.status == 'begin_add_withdrawal':
+                if 'quick_reply' in message_data:
+                    payload = message_data['quick_reply']['payload']
+                    verify_quick_message(user.id, sender, payload, conversation.status)
+                else:
+                    # Tries again
+                    verify_quick_message(user.id, sender, 'withdrawal', None)
+
+            elif conversation.status == 'draft_add_withdrawal':
+                verify_new_entry(user.id, sender, text, conversation.status)
+
+            elif conversation.status == 'confirm_add_withdrawal':
+                if 'postback' in message_data:
+                    payload = message_data['postback']['payload']
+                    print(payload)
+                    send_text_message(sender, 'ok')
+                    conversation.status = 'waiting'
+                    db.session.commit()
+                else:
+                    new_entry = Budget.query.filter_by(user_id=user.id, status='revision', entry_type='withdrawal').first()
+                    send_buttons(sender, get_response('confirm_add_data').format('saída', 
+                                                                                 new_entry.value,
+                                                                                 new_entry.date_time.strftime('%d/%m/%Y'),
+                                                                                 new_entry.description))
+
 
             # message = create_response_message(user, text)
             # send_message(sender, message)

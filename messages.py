@@ -27,6 +27,10 @@ chat_responses['begin_add_data'] = [
     'Vamos adicionar uma {} para a categoria {}. Me diga uma descrição, um valor e uma data, separados por vírgula.',
 ]
 
+chat_responses['confirm_add_data'] = [
+    'Vou adicionar uma {} no valor de R$ {} no dia {} com descrição {}. Está correto?',
+]
+
 chat_responses['begin_add_category'] = [
     'Vamos adicionar algumas novas categorias? Envie as categorias que quer cadastrar, separadas por vírgula.',
 ]
@@ -71,7 +75,7 @@ def define_response_by_keyword(message):
 
 
 # CREATE FACEBOOK MESSENGER STYLE RESPONSES
-def get_quick_replies(options_type='default'):
+def get_quick_replies(options_type='default', **kwargs):
     """
     Creates the quick replies payload
     """
@@ -96,8 +100,39 @@ def get_quick_replies(options_type='default'):
                             'title': 'Adicionar categoria',
                             'payload': 'add_category'
                         }]
+    elif options_type == 'begin_add_withdrawal':
+        # Returns a list of categories as quick replies
+        quick_replies = []
+        for category in kwargs.get('categories', []):
+            payload = {
+                'content_type': 'text',
+                'title': category,
+                'payload': category
+            }
+            quick_replies.append(payload)
 
     return quick_replies
+
+
+def get_button_reply(options_type='default', **kwargs):
+    """
+    Creates button replies
+    """
+    if options_type == 'default':
+        button_reply = [
+              {
+                'type': 'postback',
+                'title': 'Sim, está correto',
+                'payload': 'finalize'
+              },
+              {
+                'type': 'postback',
+                'title': 'Não, quero mudar',
+                'payload': 'retry'
+              }
+            ]
+
+    return button_reply
 
 
 def send_message(payload):
@@ -130,11 +165,35 @@ def send_text_message(sender, message):
     send_message(payload)
 
 
-def send_quick_replies(sender, message, options_type="default"):
+def send_quick_replies(sender, message, options_type="default", **kwargs):
     """
     Send a quick reply style of payload
     """
-    options = get_quick_replies()
+    options = get_quick_replies(options_type, **kwargs)
     payload = {'recipient': {'id': sender}, 'message': {'text': message, 'quick_replies': options}}
+    send_message(payload)
+
+
+def send_buttons(sender, message, options_type="default", **kwargs):
+    """
+    Send a button style of payload
+    """
+    options = get_button_reply(options_type, **kwargs)
+    payload = {
+        'recipient': {
+            'id': sender
+        }, 
+        'message': {
+            'attachment': {
+                'type': 'template', 
+                'payload': {
+                    'template_type': 'button',
+                    'text': message,
+                    'buttons': options
+                }
+            }
+        }
+    }
+    print(payload)
     send_message(payload)
 
