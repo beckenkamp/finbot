@@ -37,6 +37,12 @@ chat_responses['sorry_wrong_add'] = [
     'Putz =( Vamos tentar de novo. Me fale a descrição, o valor e a data novamente.',
 ]
 
+chat_responses['done_add'] = [
+    'Ok :)',
+    'Deu tudo certo! =)',
+    'Feito. ;)',
+]
+
 chat_responses['begin_add_category'] = [
     'Vamos adicionar algumas novas categorias? Envie as categorias que quer cadastrar, separadas por vírgula.',
 ]

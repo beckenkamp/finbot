@@ -229,13 +229,19 @@ def verify_new_entry(user_id, sender, text, conversation_status):
     """
     Verify and handles the new entry as a draft
     """
+    for value in re.findall('\d+(?:\,\d{2})?', text):
+        value_replaced = value.replace(',','.')
+        text = text.replace(value, value_replaced)
+
+    print(text)
+
     parts_raw = text.split(',')
     parts = [part.strip() for part in parts_raw]
 
     description = parts[0]
     value = handle_value(parts[1])
     if len(parts) > 2:
-        entry_date = handle_date(parts[3])
+        entry_date = handle_date(parts[2])
     else:
         entry_date = datetime.now()
 
@@ -339,6 +345,9 @@ def webhook():
                 conversation.status = 'waiting'
                 db.session.commit()
 
+                # Ok message
+                send_text_message(sender, get_response('done_add'))
+
                 # Sends the category list
                 send_text_message(sender, get_category_list(user.id))
 
@@ -352,8 +361,8 @@ def webhook():
                     verify_quick_message(user.id, sender, payload, conversation.status)
                 else:
                     # Tries again, keeping context
-                    wrong_entry = Budget.query.filter_by(user_id=user.id, 
-                                                         status='wrong').first()
+                    wrong_entry = Budget.query.filter_by(user_id=user.id).first()
+
                     verify_quick_message(user.id, sender, wrong_entry.entry_type, None)
 
             elif conversation.status == 'draft_add_data':
@@ -370,14 +379,14 @@ def webhook():
                     if payload == 'finalize':
                         # Confims that data is corret, change status to DONE
                         new_entry.status = 'done'
-                        send_text_message(sender, 'ok')
+                        send_text_message(sender, get_response('done_add'))
                         send_quick_replies(sender, get_response('waiting'))
 
                         # Back to initial state of conversation
                         conversation.status = 'waiting'
                     else:
                         # The data is wrong, tries agina
-                        new_entry.status = 'wrong'
+                        new_entry.status = 'draft'
                         # Sends a message asking to reenter the data
                         send_text_message(sender, get_response('sorry_wrong_add'))
 
