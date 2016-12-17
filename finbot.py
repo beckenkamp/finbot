@@ -185,31 +185,37 @@ def verify_quick_message(user_id, sender, payload, conversation_status):
     """
     Verify the user request and the conversation status to manage the response
     """
-    if conversation_status == 'begin_add_withdrawal':
+    if conversation_status == 'begin_add_data':
         if payload:
             category = Category.query.filter_by(user_id=user_id, name=payload).first()
-            send_text_message(sender, get_response('begin_add_data').format('saída', category))
+            if payload == 'withdrawal':
+                entry_type = 'saída'
+            else:
+                entry_type = 'entrada'
+            send_text_message(sender, get_response('begin_add_data').format(entry_type, category))
+            
+            # Inserts category to the draft new entry
+            new_entry = Budget.query.filter_by(user_id=user_id, status='draft').first()
+            new_entry.category_id = category.id
 
+            change_conversation_status(user_id, 'draft_add_data')
+        else:
+            # Tries again
+            verify_quick_message(user_id, sender, payload, None)
+    else:
+        if payload in ['deposit', 'withdrawal']:
+            # Add the draft initial data
             new_entry = Budget()
             new_entry.user_id = user_id
-            new_entry.category_id = category.id
-            new_entry.entry_type = 'withdrawal'
+            new_entry.entry_type = payload
             db.session.add(new_entry)
             db.session.commit()
 
-            change_conversation_status(user_id, 'draft_add_withdrawal')
-        else:
-            # Tries again
-            verify_quick_message(user_id, sender, 'withdrawal', None)
-    else:
-        if payload == 'deposit':
-            pass
-        if payload == 'withdrawal':
             send_quick_replies(sender, 
                                "Escolha uma categoria...", 
-                               'begin_add_withdrawal', 
+                               'begin_add_data', 
                                categories=[c.name for c in Category.query.filter_by(user_id=user_id)])
-            change_conversation_status(user_id, 'begin_add_withdrawal')
+            change_conversation_status(user_id, 'begin_add_data')
         if payload == 'add_category':
             send_text_message(sender, get_response('begin_add_category'))
             change_conversation_status(user_id, 'begin_add_category')
@@ -223,7 +229,6 @@ def verify_new_entry(user_id, sender, text, conversation_status):
     """
     Verify and handles the new entry as a draft
     """
-
     parts_raw = text.split(',')
     parts = [part.strip() for part in parts_raw]
 
@@ -234,10 +239,10 @@ def verify_new_entry(user_id, sender, text, conversation_status):
     else:
         entry_date = datetime.now()
 
-    if conversation_status != 'confirm_add_withdrawal':
-        new_entry = Budget.query.filter_by(user_id=user_id, status='draft', entry_type='withdrawal').first()
+    if conversation_status != 'confirm_add_data':
+        new_entry = Budget.query.filter_by(user_id=user_id, status='draft').first()
     else:
-        new_entry = Budget.query.filter_by(user_id=user_id, status='revision', entry_type='withdrawal').first()
+        new_entry = Budget.query.filter_by(user_id=user_id, status='revision').first()
 
     if new_entry:
         new_entry.description = description
@@ -246,8 +251,11 @@ def verify_new_entry(user_id, sender, text, conversation_status):
         new_entry.status = 'revision'
         db.session.commit()
 
-    if conversation_status != 'confirm_add_withdrawal':
-        change_conversation_status(user_id, 'confirm_add_withdrawal')
+    if conversation_status != 'confirm_add_data':
+        # Sends the confirmation buttons
+        sends_confirm_new_entry_buttons(user_id, sender)
+        change_conversation_status(user_id, 'confirm_add_data')
+
 
 
 def handle_date(raw):
@@ -261,6 +269,21 @@ def handle_value(raw):
     """
     float_number = re.findall(r"[-+]?\d*\.\d+|\d+", raw)
     return float(float_number[0])
+
+
+def sends_confirm_new_entry_buttons(user_id, sender):
+    """ 
+    Sends the confirmation buttons
+    """
+    new_entry = Budget.query.filter_by(user_id=user_id, status='revision').first()
+    if new_entry.entry_type == 'withdrawal':
+        entry_type = 'saída'
+    else:
+        entry_type = 'entrada'
+    send_buttons(sender, get_response('confirm_add_data').format(entry_type, 
+                                                                 new_entry.value,
+                                                                 new_entry.date_time.strftime('%d/%m/%Y'),
+                                                                 new_entry.description))
 
 
 @app.route('/')
@@ -278,6 +301,9 @@ def webhook():
                 text = data['entry'][0]['messaging'][0]['message']['text']  # Incoming Message Text
                 message_data = data['entry'][0]['messaging'][0]['message']
 
+                if 'quick_reply' in data['entry'][0]['messaging'][0]['message']:
+                    message_data = data['entry'][0]['messaging'][0]['message']['quick_reply']
+
             if 'postback' in data['entry'][0]['messaging'][0]:
                 message_data = data['entry'][0]['messaging'][0]['postback']
 
@@ -288,6 +314,7 @@ def webhook():
             print(conversation.status)
 
             if conversation.status == 'init':
+                # First time user is accessing this bot
                 send_text_message(sender, get_response('intro'))
                 send_text_message(sender, 'Ainda não temos categorias cadastradas. Vamos começar com elas?')
                 send_text_message(sender, get_response('begin_add_category'))
@@ -296,13 +323,17 @@ def webhook():
                 db.session.commit()
 
             elif conversation.status == 'waiting':
-                if 'quick_reply' in message_data:
-                    payload = message_data['quick_reply']['payload']
+                # Default actions when the bot is waiting for an action to begin
+                if 'payload' in message_data:
+                    # If some action is already choosed, do something
+                    payload = message_data['payload']
                     verify_quick_message(user.id, sender, payload, conversation.status)
                 else:
+                    # If no action is choosed yet
                     send_quick_replies(sender, get_response('waiting'))
 
             elif conversation.status == 'begin_add_category':
+                # Save categories
                 save_categories(user.id, text)
                 
                 conversation.status = 'waiting'
@@ -311,36 +342,53 @@ def webhook():
                 # Sends the category list
                 send_text_message(sender, get_category_list(user.id))
 
+                # Sends initial quick replies again
                 send_quick_replies(sender, get_response('waiting'))
 
-            elif conversation.status == 'begin_add_withdrawal':
-                if 'quick_reply' in message_data:
-                    payload = message_data['quick_reply']['payload']
+            elif conversation.status == 'begin_add_data':
+                # When the add data action is beginned
+                if 'payload' in message_data:
+                    payload = message_data['payload']
                     verify_quick_message(user.id, sender, payload, conversation.status)
                 else:
-                    # Tries again
-                    verify_quick_message(user.id, sender, 'withdrawal', None)
+                    # Tries again, keeping context
+                    wrong_entry = Budget.query.filter_by(user_id=user.id, 
+                                                         status='wrong').first()
+                    verify_quick_message(user.id, sender, wrong_entry.entry_type, None)
 
-            elif conversation.status == 'draft_add_withdrawal':
+            elif conversation.status == 'draft_add_data':
+                # Verifies the data from the new entry, and respond something
                 verify_new_entry(user.id, sender, text, conversation.status)
 
-            elif conversation.status == 'confirm_add_withdrawal':
-                if 'postback' in message_data:
-                    payload = message_data['postback']['payload']
-                    print(payload)
-                    send_text_message(sender, 'ok')
-                    conversation.status = 'waiting'
+            elif conversation.status == 'confirm_add_data':
+                # Confirm data before finish the process
+                if 'payload' in message_data:
+                    # If user choosed to confirm or to reenter the data
+                    payload = message_data['payload']
+                    new_entry = Budget.query.filter_by(user_id=user.id, 
+                                                       status='revision').first()
+                    if payload == 'finalize':
+                        # Confims that data is corret, change status to DONE
+                        new_entry.status = 'done'
+                        send_text_message(sender, 'ok')
+                        send_quick_replies(sender, get_response('waiting'))
+
+                        # Back to initial state of conversation
+                        conversation.status = 'waiting'
+                    else:
+                        # The data is wrong, tries agina
+                        new_entry.status = 'wrong'
+                        # Sends a message asking to reenter the data
+                        send_text_message(sender, get_response('sorry_wrong_add'))
+
+                        # Back to state draft part of add data
+                        conversation.status = 'draft_add_data'
                     db.session.commit()
                 else:
-                    new_entry = Budget.query.filter_by(user_id=user.id, status='revision', entry_type='withdrawal').first()
-                    send_buttons(sender, get_response('confirm_add_data').format('saída', 
-                                                                                 new_entry.value,
-                                                                                 new_entry.date_time.strftime('%d/%m/%Y'),
-                                                                                 new_entry.description))
+                    # Sends the confirmation buttons
+                    sends_confirm_new_entry_buttons(user.id, sender)
 
 
-            # message = create_response_message(user, text)
-            # send_message(sender, message)
         except Exception as e:
             print(traceback.format_exc())  # something went wrong
     elif request.method == 'GET': # For the initial verification

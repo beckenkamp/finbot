@@ -31,6 +31,12 @@ chat_responses['confirm_add_data'] = [
     'Vou adicionar uma {} no valor de R$ {} no dia {} com descrição {}. Está correto?',
 ]
 
+chat_responses['sorry_wrong_add'] = [
+    'Desculpe se não entendi direito :( Vamos alterar isso então. Me fale a descrição, o valor e a data novamente.',
+    'Oh, oh... Foi mal =/ Bora tentar de novo? Me fale a descrição, o valor e a data novamente.',
+    'Putz =( Vamos tentar de novo. Me fale a descrição, o valor e a data novamente.',
+]
+
 chat_responses['begin_add_category'] = [
     'Vamos adicionar algumas novas categorias? Envie as categorias que quer cadastrar, separadas por vírgula.',
 ]
@@ -100,7 +106,7 @@ def get_quick_replies(options_type='default', **kwargs):
                             'title': 'Adicionar categoria',
                             'payload': 'add_category'
                         }]
-    elif options_type == 'begin_add_withdrawal':
+    elif options_type == 'begin_add_data':
         # Returns a list of categories as quick replies
         quick_replies = []
         for category in kwargs.get('categories', []):
