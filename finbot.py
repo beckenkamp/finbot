@@ -16,7 +16,7 @@ from datediscover import get_date
 
 # Configurations
 token = os.environ.get('FB_ACCESS_TOKEN')
-db_file = os.path.realpath('finbot.db')
+db_file = os.path.realpath('finbot_database.db')
 
 # App and modules creations
 app = Flask(__name__)
