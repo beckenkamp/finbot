@@ -43,6 +43,21 @@ chat_responses['done_add'] = [
     'Feito. ;)',
 ]
 
+chat_responses['wrong_formatted_entry'] = [
+    'Não consegui entender. Vamos tentar novamente com um formato parecido com o exemplo.\n'
+    'A data não é obrigatório se o registro for para hoje.',
+    'Acho que não captei... Podemos tentar de novo como no exemplo?\n'
+    'A data não é obrigatório se o registro for para hoje.',
+]
+
+chat_responses['wrong_formatted_entry_exemple'] = [
+    'Almoço, 20 reais, dia 10',
+    'Café da manhã, 20,90, 10 de dezembro',
+    'Jantar, R$ 20,50, 10/12',
+    'Conta de luz, R$ 70,50, 10/12',
+    'Mensalidade da academia, R$ 99, 25/10',
+]
+
 chat_responses['begin_add_category'] = [
     'Vamos adicionar algumas novas categorias? Envie as categorias que quer cadastrar, separadas por vírgula.',
 ]
@@ -194,10 +209,10 @@ def send_buttons(sender, message, options_type="default", **kwargs):
     payload = {
         'recipient': {
             'id': sender
-        }, 
+        },
         'message': {
             'attachment': {
-                'type': 'template', 
+                'type': 'template',
                 'payload': {
                     'template_type': 'button',
                     'text': message,
@@ -206,6 +221,4 @@ def send_buttons(sender, message, options_type="default", **kwargs):
             }
         }
     }
-    print(payload)
     send_message(payload)
-

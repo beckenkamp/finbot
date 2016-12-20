@@ -12,6 +12,7 @@ from flask import Flask, request
 
 from messages import send_loading_message, send_message, send_quick_replies, get_response, \
                      send_text_message, send_buttons
+from datediscover import get_date
 
 # Configurations
 token = os.environ.get('FB_ACCESS_TOKEN')
@@ -193,7 +194,7 @@ def verify_quick_message(user_id, sender, payload, conversation_status):
             else:
                 entry_type = 'entrada'
             send_text_message(sender, get_response('begin_add_data').format(entry_type, category))
-            
+
             # Inserts category to the draft new entry
             new_entry = Budget.query.filter_by(user_id=user_id, status='draft').first()
             new_entry.category_id = category.id
@@ -211,9 +212,9 @@ def verify_quick_message(user_id, sender, payload, conversation_status):
             db.session.add(new_entry)
             db.session.commit()
 
-            send_quick_replies(sender, 
-                               "Escolha uma categoria...", 
-                               'begin_add_data', 
+            send_quick_replies(sender,
+                               "Escolha uma categoria...",
+                               'begin_add_data',
                                categories=[c.name for c in Category.query.filter_by(user_id=user_id)])
             change_conversation_status(user_id, 'begin_add_data')
         if payload == 'add_category':
@@ -233,13 +234,24 @@ def verify_new_entry(user_id, sender, text, conversation_status):
         value_replaced = value.replace(',','.')
         text = text.replace(value, value_replaced)
 
-    print(text)
-
     parts_raw = text.split(',')
+
+    # Sends a message warning user that the entry is wrong formatted
+    if len(parts_raw) < 2:
+        send_text_message(sender, get_response('wrong_formatted_entry'))
+        send_text_message(sender, get_response('wrong_formatted_entry_exemple'))
+        return None
+
     parts = [part.strip() for part in parts_raw]
 
     description = parts[0]
-    value = handle_value(parts[1])
+    try:
+        value = handle_value(parts[1])
+    except IndexError:
+        send_text_message(sender, get_response('wrong_formatted_entry'))
+        send_text_message(sender, get_response('wrong_formatted_entry_exemple'))
+        return None
+
     if len(parts) > 2:
         entry_date = handle_date(parts[2])
     else:
@@ -265,20 +277,22 @@ def verify_new_entry(user_id, sender, text, conversation_status):
 
 
 def handle_date(raw):
-    # TODO: Handle datetime
-    return datetime.now()
+    """
+    Handle datetime
+    """
+    return datetime.combine(get_date(raw), datetime.min.time())
 
 
 def handle_value(raw):
     """
     Extracts a float from a given string
     """
-    float_number = re.findall(r"[-+]?\d*\.\d+|\d+", raw)
+    float_number = re.findall('[-+]?\d*\.\d+|\d+', raw)
     return float(float_number[0])
 
 
 def sends_confirm_new_entry_buttons(user_id, sender):
-    """ 
+    """
     Sends the confirmation buttons
     """
     new_entry = Budget.query.filter_by(user_id=user_id, status='revision').first()
@@ -286,7 +300,7 @@ def sends_confirm_new_entry_buttons(user_id, sender):
         entry_type = 'saída'
     else:
         entry_type = 'entrada'
-    send_buttons(sender, get_response('confirm_add_data').format(entry_type, 
+    send_buttons(sender, get_response('confirm_add_data').format(entry_type,
                                                                  new_entry.value,
                                                                  new_entry.date_time.strftime('%d/%m/%Y'),
                                                                  new_entry.description))
@@ -317,14 +331,13 @@ def webhook():
             send_loading_message(sender)  # Typing on signal
 
             conversation = get_or_create_conversation(user.id)  # The conversation status
-            print(conversation.status)
 
             if conversation.status == 'init':
                 # First time user is accessing this bot
                 send_text_message(sender, get_response('intro'))
                 send_text_message(sender, 'Ainda não temos categorias cadastradas. Vamos começar com elas?')
                 send_text_message(sender, get_response('begin_add_category'))
-                
+
                 conversation.status = 'begin_add_category'
                 db.session.commit()
 
@@ -341,7 +354,7 @@ def webhook():
             elif conversation.status == 'begin_add_category':
                 # Save categories
                 save_categories(user.id, text)
-                
+
                 conversation.status = 'waiting'
                 db.session.commit()
 
@@ -374,7 +387,7 @@ def webhook():
                 if 'payload' in message_data:
                     # If user choosed to confirm or to reenter the data
                     payload = message_data['payload']
-                    new_entry = Budget.query.filter_by(user_id=user.id, 
+                    new_entry = Budget.query.filter_by(user_id=user.id,
                                                        status='revision').first()
                     if payload == 'finalize':
                         # Confims that data is corret, change status to DONE
@@ -396,7 +409,6 @@ def webhook():
                 else:
                     # Sends the confirmation buttons
                     sends_confirm_new_entry_buttons(user.id, sender)
-
 
         except Exception as e:
             print(traceback.format_exc())  # something went wrong
