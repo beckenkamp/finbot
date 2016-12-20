@@ -422,4 +422,4 @@ if __name__ == '__main__':
     # Verify if database exists and create it
     if not os.path.isfile(db_file):
         db.create_all()
-    app.run(debug=True)
+    app.run()
